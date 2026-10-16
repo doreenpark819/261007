@@ -32,3 +32,21 @@ python main_pipeline.py --base 25.08 --uy-start 25.06
 3. 실제 컬럼명이 다르면 `COL` 매핑만 수정
 4. 로데이터에는 **전년 동기 구간**(예: 24.06~24.09)도 포함되어야 증감이 계산됨
 5. CSV 인코딩은 UTF-8 / CP949 자동 판별, 년월은 `25.06`, `2025.06`, `202506`, `2025-06` 모두 허용
+
+---
+
+# 내부망(파이썬 없음) 운영: 엑셀 수식 + VBA
+
+외부망에서 `python build_excel.py`로 만든 아래 두 파일만 내부망으로 반입한다.
+
+| 파일 | 내용 |
+|---|---|
+| `excel/손해율_집계.xlsx` | 수식 기반 집계 템플릿 (VLOOKUP·SUMIFS·RANK·INDEX/MATCH, 더미 데이터 포함) |
+| `excel/report_macro.bas` | VBA 모듈 (CP949): `PrepareRawData` 수식 채우기, `MakeWordReport` 워드 출력 |
+
+시트 구성: 사용법 / 설정(기준월 입력) / 요약 / Top20 / 담보별집계 / raw_data / code_master
+
+매월 작업 순서: 설정에서 기준월 입력 → raw_data A~J열에 로데이터 붙여넣기 → `PrepareRawData` → `MakeWordReport`
+(매크로가 막혀 있으면 요약·Top20 시트의 표를 복사해 워드에 붙여넣기)
+
+엑셀 수식 결과는 파이썬 파이프라인과 545개 담보 전부 일치하는 것을 확인했다 (UY·CY 위험보험료, 손해율, 증감).
