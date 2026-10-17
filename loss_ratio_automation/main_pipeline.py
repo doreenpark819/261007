@@ -37,8 +37,8 @@ RAW_FILE = DATA_DIR / os.environ.get("LR_RAW_FILE", "raw_data.csv")
 MASTER_FILE = DATA_DIR / os.environ.get("LR_MASTER_FILE", "code_master.csv")
 REPORT_FILE = OUTPUT_DIR / "monthly_loss_report.docx"
 
-BASE_YM = "25.09"        # 마감 기준월 (CY 당월 = 이 달, UY 누적 = 이 달까지)
-UY_START_YM = "25.06"    # UY 누적 대상 계약년월 시작
+BASE_YM = "202509"        # 마감 기준월 (CY 당월 = 이 달, UY 누적 = 이 달까지)
+UY_START_YM = "202506"    # UY 누적 대상 계약년월 시작
 TOP_N = 20
 # 손해율 Top N 은 위험보험료가 작은 담보의 극단값을 피하기 위해
 # 전체 위험보험료 대비 비중이 이 값 이상인 담보만 대상으로 한다 (0 이면 제한 없음)
@@ -420,8 +420,8 @@ def build_report(windows: list[Window], base: pd.Period, out_path: Path) -> None
 # =============================================================================
 def main() -> None:
     ap = argparse.ArgumentParser(description="손해율 월말 집계 및 워드 리포트 생성")
-    ap.add_argument("--base", default=BASE_YM, help="마감 기준월 (예: 25.09)")
-    ap.add_argument("--uy-start", default=UY_START_YM, help="UY 누적 계약년월 시작 (예: 25.06)")
+    ap.add_argument("--base", default=BASE_YM, help="마감 기준월 (예: 202509)")
+    ap.add_argument("--uy-start", default=UY_START_YM, help="UY 누적 계약년월 시작 (예: 202506)")
     ap.add_argument("--out", default=str(REPORT_FILE), help="출력 docx 경로")
     args = ap.parse_args()
 

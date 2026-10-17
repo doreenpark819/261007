@@ -3,9 +3,9 @@
 
 생성 파일
   data/code_master.csv : 담보 마스터 545건 (담보코드, 담보명, 대급부명)
-  data/raw_data.csv    : 로데이터 (당해 25.06~25.09 + 전년 동기 24.06~24.09)
+  data/raw_data.csv    : 로데이터 (당해 202506~202509 + 전년 동기 202406~202409)
 
-※ 전년 동기 비교를 위해 전년(24.06~24.09) 구간도 함께 생성한다.
+※ 전년 동기 비교를 위해 전년(202406~202409) 구간도 함께 생성한다.
 ※ Phase 2(내부망)에서는 이 파일을 사용하지 않는다.
 """
 from pathlib import Path
@@ -36,8 +36,8 @@ BENEFITS = {
 }
 
 
-def ym(yy: int, mm: int) -> str:
-    return f"{yy:02d}.{mm:02d}"
+def ym(yy: int, mm: int) -> int:
+    return (2000 + yy) * 100 + mm          # 예: 202506 (내부망 형식)
 
 
 def make_master(rng: np.random.Generator) -> pd.DataFrame:
