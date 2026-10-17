@@ -3,9 +3,8 @@
 
 생성 파일
   data/code_master.csv : 담보 마스터 545건 (담보코드, 담보명, 대급부명)
-  data/raw_data.csv    : 로데이터 (당해 202506~202509 + 전년 동기 202406~202409)
+  data/raw_data.csv    : 로데이터 (출시 202505 ~ 마감 202609)
 
-※ 전년 동기 비교를 위해 전년(202406~202409) 구간도 함께 생성한다.
 ※ Phase 2(내부망)에서는 이 파일을 사용하지 않는다.
 """
 from pathlib import Path
@@ -17,8 +16,9 @@ SEED = 42
 N_CODES = 545
 DATA_DIR = Path(__file__).resolve().parent / "data"
 
-# 생성 구간: (연도 2자리, 시작월, 종료월) — 계약년월·마감년월 모두 이 구간 안에서 생성
-PERIODS = [(24, 6, 9), (25, 6, 9)]
+# 생성 구간: 출시월 ~ 마감월 (계약년월 · 마감년월 모두 이 구간)
+LAUNCH = (2025, 5)
+LAST_CLOSE = (2026, 9)
 UW_TYPES = ["일반", "간편"]
 
 # 대급부명: (담보명 예시, 위험보험료 규모 가중치, 기대 손해율)
@@ -36,8 +36,13 @@ BENEFITS = {
 }
 
 
-def ym(yy: int, mm: int) -> int:
-    return (2000 + yy) * 100 + mm          # 예: 202506 (내부망 형식)
+def month_list():
+    y, m = LAUNCH
+    out = []
+    while (y, m) <= LAST_CLOSE:
+        out.append(y * 100 + m)
+        y, m = (y + 1, 1) if m == 12 else (y, m + 1)
+    return out
 
 
 def make_master(rng: np.random.Generator) -> pd.DataFrame:
@@ -55,41 +60,40 @@ def make_master(rng: np.random.Generator) -> pd.DataFrame:
 def make_raw(master: pd.DataFrame, rng: np.random.Generator) -> pd.DataFrame:
     n = len(master)
     # 담보별 고유 특성 (연도와 무관하게 고정 → 전년 대비 비교가 의미 있도록)
-    scale = rng.lognormal(mean=14.0, sigma=1.2, size=n)               # 월 위험보험료 규모(원)
+    scale = rng.lognormal(mean=12.5, sigma=1.2, size=n)               # 월 위험보험료 규모(원)
     exp_lr = master["대급부명"].map({k: v[2] for k, v in BENEFITS.items()}).to_numpy()
     exp_lr = exp_lr * rng.lognormal(0, 0.25, size=n)                   # 담보별 손해율 편차
-    yoy_growth = rng.normal(1.08, 0.15, size=n).clip(0.5, 1.8)         # 25년 물량 성장
     main_prod = rng.choice([f"MP{i:03d}" for i in range(1, 16)], size=n)
     rider_prod = np.array([f"RP{rng.integers(1, 200):04d}" for _ in range(n)])
 
+    months = month_list()
     frames = []
-    for yy, m_from, m_to in PERIODS:
-        growth = yoy_growth if yy == 25 else np.ones(n)
-        lr_shift = rng.normal(1.0, 0.12, size=n) if yy == 25 else np.ones(n)
-        for cm in range(m_from, m_to + 1):          # 계약월
-            for clm in range(cm, m_to + 1):         # 마감월(계약월 이후)
-                elapsed = clm - cm + 1
-                for uw in UW_TYPES:
-                    uw_mult = 1.0 if uw == "일반" else 0.45
-                    uw_lr = 1.0 if uw == "일반" else 1.18
-                    prem = scale * growth * uw_mult * rng.lognormal(0, 0.15, size=n)
-                    # 초기 경과월에는 사고 발생이 적다(손해 지연 반영)
-                    maturity = min(1.0, 0.35 + 0.25 * (elapsed - 1))
-                    lr = exp_lr * lr_shift * uw_lr * maturity * rng.lognormal(0, 0.35, size=n)
-                    claim = prem * lr
-                    reserve_chg = claim * rng.normal(0.08, 0.10, size=n)  # 지급비금 변동분(±)
-                    frames.append(pd.DataFrame({
-                        "계약년월": ym(yy, cm),
-                        "마감년월": ym(yy, clm),
-                        "주상품코드": main_prod,
-                        "특약상품코드": rider_prod,
-                        "경과개월수": elapsed,
-                        "심사유형(일반.간편)": uw,
-                        "담보코드": master["담보코드"].to_numpy(),
-                        "위험보험료 합계": prem.round(0).astype(np.int64),
-                        "지급보험금합계": claim.round(0).astype(np.int64),
-                        "지급비금변동분 합계": reserve_chg.round(0).astype(np.int64),
-                    }))
+    for i, cm in enumerate(months):                    # 계약월
+        new_biz = 0.6 + 0.05 * i                       # 출시 후 판매 증가
+        lr_drift = rng.normal(1.0, 0.06, size=n)       # 계약월별 손해율 변동
+        for j, clm in enumerate(months[i:]):           # 마감월(계약월 이후)
+            elapsed = j + 1
+            persist = 0.97 ** j                        # 유지율
+            maturity = min(1.0, 0.35 + 0.15 * j)       # 초기 경과월 사고 적음(손해 지연)
+            for uw in UW_TYPES:
+                uw_mult = 1.0 if uw == "일반" else 0.45
+                uw_lr = 1.0 if uw == "일반" else 1.18
+                prem = scale * new_biz * persist * uw_mult * rng.lognormal(0, 0.15, size=n)
+                lr = exp_lr * lr_drift * uw_lr * maturity * rng.lognormal(0, 0.35, size=n)
+                claim = prem * lr
+                reserve_chg = claim * rng.normal(0.08, 0.10, size=n)   # 지급비금 변동분(±)
+                frames.append(pd.DataFrame({
+                    "계약년월": cm,
+                    "마감년월": clm,
+                    "주상품코드": main_prod,
+                    "특약상품코드": rider_prod,
+                    "경과개월수": elapsed,
+                    "심사유형(일반.간편)": uw,
+                    "담보코드": master["담보코드"].to_numpy(),
+                    "위험보험료 합계": prem.round(0).astype(np.int64),
+                    "지급보험금합계": claim.round(0).astype(np.int64),
+                    "지급비금변동분 합계": reserve_chg.round(0).astype(np.int64),
+                }))
     raw = pd.concat(frames, ignore_index=True)
     # 마스터에 없는 담보코드 몇 건 섞기 (Left Join 미매핑 처리 검증용)
     orphan = raw.sample(5, random_state=SEED).copy()

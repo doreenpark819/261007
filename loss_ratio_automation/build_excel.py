@@ -54,13 +54,17 @@ R = f"{RAW}!"
 A_ = f"'{AGG}'!"
 LAST = MAX_CODES + 1          # 담보별집계 마지막 행
 
-# 집계 구간 조건 (SUMIFS 조건 인자) — 년월은 202506 같은 숫자
+# 집계 구간 조건 (SUMIFS 조건 인자) — 년월은 202609 같은 숫자
+#   C = UY 누적, M = UY 당월, A = 전기간(출시 이후) 누적 / py=True 는 비교기간
 CRIT = {
-    ("UY", False): f'{R}$A:$A,">="&UY_START,{R}$A:$A,"<="&BASE_YM,{R}$B:$B,"<="&BASE_YM',
-    ("UY", True): f'{R}$A:$A,">="&UY_START_PY,{R}$A:$A,"<="&BASE_YM_PY,{R}$B:$B,"<="&BASE_YM_PY',
-    ("CY", False): f'{R}$B:$B,BASE_YM',
-    ("CY", True): f'{R}$B:$B,BASE_YM_PY',
+    ("C", False): f'{R}$A:$A,">="&UY_START,{R}$A:$A,"<="&BASE_YM,{R}$B:$B,"<="&BASE_YM',
+    ("C", True): f'{R}$A:$A,">="&CMP_START,{R}$A:$A,"<="&CMP_END,{R}$B:$B,"<="&CMP_CLOSE',
+    ("M", False): f'{R}$A:$A,">="&UY_START,{R}$A:$A,"<="&BASE_YM,{R}$B:$B,BASE_YM',
+    ("M", True): f'{R}$A:$A,">="&CMP_START,{R}$A:$A,"<="&CMP_END,{R}$B:$B,CMP_CLOSE',
+    ("A", False): f'{R}$A:$A,">="&LAUNCH_YM,{R}$B:$B,"<="&BASE_YM',
+    ("A", True): f'{R}$A:$A,">="&LAUNCH_YM,{R}$A:$A,"<="&CMP_END,{R}$B:$B,"<="&CMP_CLOSE',
 }
+LABEL = {"C": "LABEL_C", "M": "LABEL_M"}
 
 
 def prem_f(win, py, extra=""):
@@ -105,47 +109,71 @@ def sheet_run(wb):
     ws.sheet_view.showGridLines = False
     ws["B1"], ws["B1"].font = "손해율 월말 집계", F_TITLE
 
-    ws["B3"], ws["B3"].font = "① 입력 (노란 칸만)", F_SUB
+    ws["B3"], ws["B3"].font = "① 입력 (노란 칸만, 매월 기준월 하나만 바꾸면 됨)", F_SUB
     inputs = [
-        (4, "마감 기준월", 202509, "0", "예) 202509  → CY 당월 = 이 달, UY 누적 = 이 달 마감까지"),
-        (5, "UY 계약 시작월", 202506, "0", "예) 202506  → UY 누적 대상 계약년월의 시작"),
-        (6, "손해율 Top20 최소 보험료 비중", 0.0005, "0.00%", "보험료가 아주 작은 담보 제외용 (보통 그대로 두세요, 0이면 제한 없음)"),
+        (4, "마감 기준월", 202609, "예) 202609"),
+        (5, "출시월 (전기간 시작)", 202505, "상품 출시월. 보통 바꿀 일 없음"),
+        (6, "손해율 Top20 최소 보험료 비중", 0.0005, "보험료가 아주 작은 담보 제외용 (보통 그대로, 0이면 제한 없음)"),
     ]
-    for r, label, val, fmt, desc in inputs:
+    for r, label, val, desc in inputs:
         ws.cell(r, 2, label).font = F_BOLD
         c = ws.cell(r, 3, val)
-        c.number_format, c.border, c.alignment = fmt, BORDER, CENTER
-        c.font, c.fill = (F_INPUT, FILL_INPUT) if r < 6 else (F_BASE, PatternFill("solid", fgColor="FFF2CC"))
+        c.number_format, c.border, c.alignment = ("0.00%" if r == 6 else "0"), BORDER, CENTER
+        c.font, c.fill = (F_INPUT, FILL_INPUT) if r == 4 else (F_BASE, PatternFill("solid", fgColor="FFF2CC"))
         ws.cell(r, 5, desc).font = F_NOTE
-    # 내부값: 텍스트로 입력돼도 숫자로 변환 (D열, 회색)
-    for r, nm in ((4, "BASE_YM"), (5, "UY_START")):
-        c = ws.cell(r, 4, f'=IFERROR(--TRIM(C{r}),0)')
-        c.font, c.number_format = Font(name=FONT, size=8, color="A6A6A6"), "0"
-        name(wb, nm, f"실행!$D${r}")
-    ws["D3"], ws["D3"].font = "자동변환", Font(name=FONT, size=8, color="A6A6A6")
-    ws["D7"], ws["D8"] = "=D4-100", "=D5-100"
-    for c in (ws["D7"], ws["D8"]):
-        c.font, c.number_format = Font(name=FONT, size=8, color="A6A6A6"), "0"
-    name(wb, "BASE_YM_PY", "실행!$D$7")
-    name(wb, "UY_START_PY", "실행!$D$8")
+    grey = Font(name=FONT, size=8, color="A6A6A6")
+    ws["D3"], ws["D3"].font = "자동값", grey
+    prev = lambda x: f"IF(MOD({x},100)=1,{x}-89,{x}-1)"          # YYYYMM 한 달 전
+    uy = lambda s_, e: (f'"UY"&MOD(INT({s_}/100),100)&"."&MOD({s_},100)&"~"'
+                        f'&IF(INT({s_}/100)=INT({e}/100),"",MOD(INT({e}/100),100)&".")&MOD({e},100)')
+    internal = [  # 셀, 수식, 이름
+        ("D4", "=IFERROR(--TRIM(C4),0)", "BASE_YM"),
+        ("D5", "=IFERROR(--TRIM(C5),0)", "LAUNCH_YM"),
+        ("D7", "=INT(D4/100)*100+1", "UY_START"),          # 기준연도 1월
+        ("D8", f"={prev('D7')}", "CMP_START"),             # 비교: 계약 시작 1개월 전
+        ("D9", f"={prev('D4')}", "CMP_END"),               # 비교: 계약 끝 1개월 전
+        ("D10", "=D9", "CMP_CLOSE"),                       # 비교: 마감월 1개월 전
+    ]
+    hidden = Font(name=FONT, size=8, color="FFFFFF")              # 구간 계산값은 흰 글씨(숨김)
+    for ref, f, nm in internal:
+        ws[ref] = f
+        ws[ref].font, ws[ref].number_format = (grey if ref in ("D4", "D5") else hidden), "0"
+        name(wb, nm, f"실행!${ref[0]}${ref[1:]}")
     name(wb, "LR_MIN_SHARE", "실행!$C$6")
+    auto = [  # 행, 항목, 표시(C), 설명(E), 이름
+        (7, "UY 누적 (자동)", f'={uy("D7", "D4")}&" 누적"',
+         '="계약 "&D7&"~"&D4&" 의 "&D4&" 마감까지 누적 손해율"', "LABEL_C"),
+        (8, "UY 당월 (자동)", '="UY"&MOD(INT(D4/100),100)&"."&MOD(D4,100)&" 당월"',
+         '="계약 "&D7&"~"&D4&" 의 "&D4&" 한 달간 위험보험료·손해액"', "LABEL_M"),
+        (9, "비교기간 (자동, 1개월 전)", f"={uy('D8', 'D9')}",
+         '="계약 "&D8&"~"&D9&", 마감 "&D10&" 기준 (누적·당월 각각 같은 방식)"', "LABEL_CMP"),
+        (10, "전기간 누적 (자동)", '="출시 이후 누적"',
+         '="계약 "&D5&"~"&D4&" 의 "&D4&" 마감까지 누적 (비교: 계약 ~"&D9&", "&D10&" 마감)"', None),
+    ]
+    for r, label, disp, desc, nm in auto:
+        ws.cell(r, 2, label).font = F_BASE
+        c = ws.cell(r, 3, disp)
+        c.font, c.alignment, c.border = F_BOLD, CENTER, BORDER
+        ws.cell(r, 5, desc).font = F_NOTE
+        if nm:
+            name(wb, nm, f"실행!$C${r}")
 
-    ws["B10"], ws["B10"].font = "② 매월 작업 순서", F_SUB
+    ws["B12"], ws["B12"].font = "② 매월 작업 순서", F_SUB
     steps = [
-        "1) 위 노란 칸에 기준월(예: 202509)과 UY 계약 시작월(예: 202506)을 입력",
+        "1) 위 노란 칸에 마감 기준월(예: 202609)만 입력 → UY 구간·비교기간은 자동 계산",
         "2) 로데이터 넣기 — 매크로 [LoadRawData] 실행 → 파일 선택 (기존 데이터는 자동 삭제)",
         "     매크로를 못 쓰면: raw_data 시트 전체 삭제 → A1에 헤더 포함 10개 열 붙여넣기 (값 붙여넣기)",
-        "     ※ 로데이터에는 당해 구간과 전년 동기 구간(예: 202406~202409)이 모두 있어야 증감이 계산됨",
+        "     ※ 로데이터는 출시월(202505)부터 기준월 마감까지 전체를 넣는다 (비교기간 계산에 지난달 마감분 필요)",
         "3) 아래 ③ 데이터 점검의 '종합 상태'가 정상인지 확인",
         "4) 워드 리포트 — 매크로 [MakeWordReport] 실행 → 이 파일과 같은 폴더에 docx 생성",
         "     매크로를 못 쓰면: '요약', 'Top20' 시트의 표를 복사해 워드에 붙여넣기(원본 서식 유지)",
         "담보 마스터가 바뀐 경우에만: code_master 시트 A~C열(담보코드·담보명·대급부명) 교체 (최대 1,000개 자동 반영)",
     ]
-    for i, t in enumerate(steps, start=11):
+    for i, t in enumerate(steps, start=13):
         ws.cell(i, 2, t).font = F_BASE
 
     # ③ 데이터 점검
-    top = 20
+    top = 22
     ws.cell(top, 2, "③ 데이터 점검 (자동)").font = F_SUB
     hdr_row(ws, top + 1, 2, ["점검 항목", "결과", "상태", "문제일 때 조치"])
     rows_ = f"(COUNTA({R}$G:$G)-1)"
@@ -154,8 +182,8 @@ def sheet_run(wb):
         ("기준월 입력 형식", "=BASE_YM",
          "=IF(AND(BASE_YM>=190001,BASE_YM<=209912,MOD(BASE_YM,100)>=1,MOD(BASE_YM,100)<=12),\"정상\",\"오류\")",
          "202509처럼 6자리 숫자로 입력"),
-        ("UY 계약 시작월 형식", "=UY_START",
-         "=IF(AND(UY_START>=190001,MOD(UY_START,100)>=1,MOD(UY_START,100)<=12,UY_START<=BASE_YM),\"정상\",\"오류\")",
+        ("출시월 형식", "=LAUNCH_YM",
+         "=IF(AND(LAUNCH_YM>=190001,MOD(LAUNCH_YM,100)>=1,MOD(LAUNCH_YM,100)<=12,LAUNCH_YM<=BASE_YM),\"정상\",\"오류\")",
          "6자리 숫자, 기준월보다 같거나 이전이어야 함"),
         ("로데이터 행 수", f"={rows_}",
          f"=IF({rows_}>0,\"정상\",\"오류\")", "raw_data 시트에 데이터가 없음 → 2) 단계 실행"),
@@ -172,8 +200,12 @@ def sheet_run(wb):
          "A열=계약년월, B열=마감년월이 맞는지 확인"),
         ("기준월 마감 데이터 행 수", f"=COUNTIF({R}$B:$B,BASE_YM)",
          f"=IF(COUNTIF({R}$B:$B,BASE_YM)>0,\"정상\",\"오류\")", "기준월 입력값 또는 로데이터 기간 확인"),
-        ("전년 동월 마감 데이터 행 수", f"=COUNTIF({R}$B:$B,BASE_YM_PY)",
-         f"=IF(COUNTIF({R}$B:$B,BASE_YM_PY)>0,\"정상\",\"확인\")", "없으면 전년 대비 증감이 공란 → 전년 구간도 추출"),
+        ("비교기간 마감월 데이터 행 수", f"=COUNTIF({R}$B:$B,CMP_CLOSE)",
+         f"=IF(COUNTIF({R}$B:$B,CMP_CLOSE)>0,\"정상\",\"확인\")", "없으면 동기간 증감이 공란 → 지난달 마감분까지 포함해 추출"),
+        ("출시월 이전 계약 행", f"=COUNTIF({R}$A:$A,\"<\"&LAUNCH_YM)",
+         f"=IF(COUNTIF({R}$A:$A,\"<\"&LAUNCH_YM)=0,\"정상\",\"확인\")", "출시월 입력값 확인 (전기간 누적에서 제외됨)"),
+        ("기준월 이후 마감 행 (집계 제외)", f"=COUNTIF({R}$B:$B,\">\"&BASE_YM)",
+         f"=IF(COUNTIF({R}$B:$B,\">\"&BASE_YM)=0,\"정상\",\"확인\")", "기준월을 잘못 입력했는지 확인 (과거 월 재작성이면 정상)"),
         ("심사유형이 일반/간편 외 값인 행", f"={rows_}-COUNTIF({R}$F:$F,\"일반\")-COUNTIF({R}$F:$F,\"간편\")",
          f"=IF({rows_}-COUNTIF({R}$F:$F,\"일반\")-COUNTIF({R}$F:$F,\"간편\")=0,\"정상\",\"확인\")",
          "심사유형별 표에서 빠짐 (전사 합계에는 포함)"),
@@ -215,8 +247,8 @@ def sheet_run(wb):
                                   fill=PatternFill("solid", fgColor="FFEB9C"), font=Font(color="9C5700", bold=True)))
     ws.cell(r + 3, 2, "※ 매크로 최초 1회 설치: Alt+F11 → 파일 → 파일 가져오기 → report_macro.bas → 닫기 → "
                       "'Excel 매크로 사용 통합 문서(*.xlsm)'로 다른 이름 저장. 이후 Alt+F8로 실행.").font = F_NOTE
-    ws.cell(r + 4, 2, "※ 손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료.  UY 누적 = 계약년월이 [UY 시작월~기준월]이고 "
-                      "마감년월 ≤ 기준월인 실적 누적.  CY 당월 = 마감년월 = 기준월.  전년 동기 = 12개월 전 같은 구간.").font = F_NOTE
+    ws.cell(r + 4, 2, "※ 손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료.  증감(p) = 당기 손해율 − 비교기간 손해율.  "
+                      "비교기간 = 계약 구간과 마감월을 모두 1개월 앞당긴 동기간 (예: UY26.1~9 ↔ UY25.12~26.8, 202608 마감).").font = F_NOTE
 
 
 # ---------------------------------------------------------------------------
@@ -224,10 +256,10 @@ def sheet_run(wb):
 # ---------------------------------------------------------------------------
 def sheet_agg(wb):
     ws = wb.create_sheet(AGG)
-    blk = ["위험보험료", "손해액", "손해율", "전년 위험보험료", "전년 손해액", "전년 손해율",
+    blk = ["위험보험료", "손해액", "손해율", "비교 위험보험료", "비교 손해액", "비교 손해율",
            "위험보험료 증감률", "손해율 증감(p)"]
-    heads = (["담보코드", "대급부명", "담보명"] + [f"UY {h}" for h in blk] + [f"CY {h}" for h in blk]
-             + ["UY 보험료순위", "UY 손해율키", "UY 손해율순위", "CY 보험료순위", "CY 손해율키", "CY 손해율순위",
+    heads = (["담보코드", "대급부명", "담보명"] + [f"UY누적 {h}" for h in blk] + [f"UY당월 {h}" for h in blk]
+             + ["누적 보험료순위", "누적 손해율키", "누적 손해율순위", "당월 보험료순위", "당월 손해율키", "당월 손해율순위",
                 "", "대급부 첫등장", "대급부 UY보험료", "대급부 순위", "로데이터 행수", "중복"])
     hdr_row(ws, 1, 1, heads)
     widths(ws, [9, 10, 24] + [12] * 28)
@@ -238,7 +270,7 @@ def sheet_agg(wb):
         ws.cell(r, 2, f'=IF($A{r}="","",{MST}!$C{r}&"")')
         ws.cell(r, 3, f'=IF($A{r}="","",{MST}!$B{r}&"")')
         code = f",{R}$G:$G,$A{r}"
-        for start, win in ((4, "UY"), (12, "CY")):
+        for start, win in ((4, "C"), (12, "M")):
             L = [get_column_letter(start + k) for k in range(8)]
             f = [
                 f'=IF($A{r}="","",{prem_f(win, False, code)})',
@@ -273,13 +305,14 @@ def sheet_agg(wb):
 # ---------------------------------------------------------------------------
 def sheet_summary(wb):
     ws = wb.create_sheet("요약")
-    widths(ws, [20, 15, 15, 11, 11, 15, 14])
+    widths(ws, [22, 15, 15, 11, 13, 15, 14])
     ws.sheet_view.showGridLines = False
     ws["A1"] = '=TEXT(BASE_YM,"0000\\.00")&" 기준 손해율 결산 리포트"'
     ws["A1"].font = F_TITLE
-    ws["A2"] = "금액 단위: 백만원  |  손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료  |  증감(p): 빨강 악화 / 파랑 개선"
+    ws["A2"] = ("금액 단위: 백만원  |  손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료  |  "
+                "증감 = 당기 − 비교기간(1개월 전 동기간), 빨강 악화 / 파랑 개선")
     ws["A2"].font = F_NOTE
-    head = ["위험보험료", "손해액", "손해율", "전년 손해율", "위험보험료 증감률", "손해율 증감(p)"]
+    head = ["위험보험료", "손해액", "손해율", "비교기간 손해율", "위험보험료 증감률", "손해율 증감(p)"]
 
     def metrics(r, prem, loss, prem_py, loss_py, blank_if=None):
         z = r % 2 == 1
@@ -294,32 +327,24 @@ def sheet_summary(wb):
     def label(r, text, align=LEFT):
         body(ws.cell(r, 1, text), align=align, zebra=(r % 2 == 1))
 
-    # 기간 설명 (VBA 제목에도 사용)
-    ws["A3"] = ('=TEXT(UY_START,"0000\\.00")&"~"&TEXT(BASE_YM,"0000\\.00")&" 계약, "'
-                '&TEXT(BASE_YM,"0000\\.00")&" 마감 누적"')
-    ws["B3"] = '=TEXT(BASE_YM,"0000\\.00")&" 마감월"'
-    for c in (ws["A3"], ws["B3"]):
-        c.font = Font(name=FONT, size=8, color="FFFFFF")      # 숨김용 (흰 글씨)
-    name(wb, "PERIOD_UY", "요약!$A$3")
-    name(wb, "PERIOD_CY", "요약!$B$3")
-
-    r = 5
+    r = 4
     ws.cell(r, 1, "1. 핵심 요약 (전사)").font = F_SUB
     r += 1
     hdr_row(ws, r, 1, ["구분"] + head)
     top = r
-    for lab, win in (("UY 누적", "UY"), ("CY 당월", "CY")):
+    for lab, win in (("=LABEL_C", "C"), ("=LABEL_M", "M"), ("전기간 누적 (출시 이후)", "A")):
         r += 1
         label(r, lab, CENTER)
         metrics(r, prem_f(win, False), loss_f(win, False), prem_f(win, True), loss_f(win, True))
     name(wb, "RPT_SUMMARY", f"요약!$A${top}:$G${r}")
     r += 1
-    ws.cell(r, 1, '="※ UY 누적: "&PERIOD_UY&" (전년 "&TEXT(UY_START_PY,"0000\\.00")&"~"&TEXT(BASE_YM_PY,"0000\\.00")'
-                  '&" 계약)  /  CY 당월: "&PERIOD_CY&" (전년 "&TEXT(BASE_YM_PY,"0000\\.00")&")"').font = F_NOTE
+    ws.cell(r, 1, '="※ 비교기간: "&LABEL_CMP&" 계약, "&TEXT(CMP_CLOSE,"0000\\.00")&" 마감 기준 (누적·당월 각각).  '
+                  '전기간 비교: 출시~"&TEXT(CMP_END,"0000\\.00")&" 계약, "&TEXT(CMP_CLOSE,"0000\\.00")&" 마감 누적"').font = F_NOTE
+    name(wb, "NOTE_CMP", f"요약!$A${r}")
 
-    for no, win in ((2, "UY"), (3, "CY")):
+    for no, win in ((2, "C"), (3, "M")):
         r += 2
-        ws.cell(r, 1, f'="{no}. {"UY 누적" if win == "UY" else "CY 당월"} 손해율 ("&PERIOD_{win}&")"').font = F_SUB
+        ws.cell(r, 1, f'="{no}. "&{LABEL[win]}&" 손해율 (비교: "&LABEL_CMP&")"').font = F_SUB
         # 심사유형별
         r += 1
         ws.cell(r, 1, f"{no}-1. 심사유형별").font = Font(name=FONT, size=10, bold=True, color=NAVY)
@@ -338,8 +363,8 @@ def sheet_summary(wb):
         r += 1
         hdr_row(ws, r, 1, ["대급부명"] + head)
         top = r
-        p0, p1 = ("D", "G") if win == "UY" else ("L", "O")      # 당해/전년 보험료 열
-        l0, l1 = ("E", "H") if win == "UY" else ("M", "P")
+        p0, p1 = ("D", "G") if win == "C" else ("L", "O")      # 당기/비교 보험료 열
+        l0, l1 = ("E", "H") if win == "C" else ("M", "P")
         for k in range(1, MAX_BENEFITS + 1):
             r += 1
             label(r, f'=IFERROR(INDEX({A_}$B$2:$B${LAST},MATCH({k},{A_}$AC$2:$AC${LAST},0)),"")')
@@ -365,18 +390,18 @@ def sheet_top(wb):
     ws.column_dimensions["K"].hidden = True    # 순위 번호
     ws.sheet_view.showGridLines = False
     ws["A1"], ws["A1"].font = "담보별 Top 20  (금액 단위: 백만원)", F_TITLE
-    blocks = [  # 제목, 순위열, 보험료, 증감률, 손해율, 증감p, 이름
-        ("UY 누적 · 위험보험료 상위 20 담보", "T", "D", "J", "F", "K", "RPT_UY_TOPP"),
-        ("UY 누적 · 손해율 상위 20 담보", "V", "D", "J", "F", "K", "RPT_UY_TOPL"),
-        ("CY 당월 · 위험보험료 상위 20 담보", "W", "L", "R", "N", "S", "RPT_CY_TOPP"),
-        ("CY 당월 · 손해율 상위 20 담보", "Y", "L", "R", "N", "S", "RPT_CY_TOPL"),
+    blocks = [  # 창, 종류, 순위열, 보험료, 증감률, 손해율, 증감p, 이름
+        ("C", "위험보험료", "T", "D", "J", "F", "K", "RPT_C_TOPP"),
+        ("C", "손해율", "V", "D", "J", "F", "K", "RPT_C_TOPL"),
+        ("M", "위험보험료", "W", "L", "R", "N", "S", "RPT_M_TOPP"),
+        ("M", "손해율", "Y", "L", "R", "N", "S", "RPT_M_TOPL"),
     ]
     r = 3
-    for title, rk, prem, pchg, lr, lrchg, nm in blocks:
-        ws.cell(r, 1, title).font = F_SUB
+    for win, kind, rk, prem, pchg, lr, lrchg, nm in blocks:
+        ws.cell(r, 1, f'={LABEL[win]}&" · {kind} 상위 20 담보 (비교: "&LABEL_CMP&")"').font = F_SUB
         r += 1
         hdr_row(ws, r, 1, ["순위", "담보코드", "대급부명", "담보명", "위험보험료", "위험보험료 증감률",
-                           "손해율(%)", "전동기 대비 증감(p)"])
+                           "손해율(%)", "동기간 대비 증감(p)"])
         top = r
         for n in range(1, TOP_N + 1):
             r += 1
@@ -390,7 +415,7 @@ def sheet_top(wb):
                 body(ws.cell(r, c, f'=IF($J{r}="","",INDEX({A_}${col}$2:${col}${LAST},$J{r}))'), fmt, al, zebra=z)
         name(wb, nm, f"Top20!$A${top}:$H${r}")
         r += 1
-        if "손해율 상위" in title:
+        if kind == "손해율":
             ws.cell(r, 1, '="※ 위험보험료 비중 "&TEXT(LR_MIN_SHARE,"0.00%")&" 이상 담보 대상"').font = F_NOTE
         r += 2
 

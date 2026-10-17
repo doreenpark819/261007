@@ -137,6 +137,7 @@ Public Sub MakeWordReport()
     Dim wdApp As Object, doc As Object
     Dim baseTxt As String, outPath As String, status As String
     Dim blocks As Variant, i As Long, ym As Long
+    Dim lc As String, lm As String, cmp As String
 
     Application.ScreenUpdating = False
     CleanRawData
@@ -159,17 +160,21 @@ Public Sub MakeWordReport()
     ym = ThisWorkbook.Names("BASE_YM").RefersToRange.Value
     baseTxt = Format(ym \ 100, "0000") & "." & Format(ym Mod 100, "00")
 
+    lc = NameValue("LABEL_C")       ' 예: UY26.1~9 누적
+    lm = NameValue("LABEL_M")       ' 예: UY26.9 당월
+    cmp = NameValue("LABEL_CMP")    ' 예: UY25.12~26.8
+
     ' 제목, 표 범위 이름, 앞에서 페이지 나눔
     blocks = Array( _
         Array("1. 핵심 요약 (전사)", "RPT_SUMMARY", False), _
-        Array("2-1. UY 누적 · 심사유형별", "RPT_UY_UW", False), _
-        Array("2-2. UY 누적 · 대급부별", "RPT_UY_BEN", False), _
-        Array("2-3. UY 누적 · 위험보험료 상위 20 담보", "RPT_UY_TOPP", True), _
-        Array("2-4. UY 누적 · 손해율 상위 20 담보", "RPT_UY_TOPL", True), _
-        Array("3-1. CY 당월 · 심사유형별", "RPT_CY_UW", True), _
-        Array("3-2. CY 당월 · 대급부별", "RPT_CY_BEN", False), _
-        Array("3-3. CY 당월 · 위험보험료 상위 20 담보", "RPT_CY_TOPP", True), _
-        Array("3-4. CY 당월 · 손해율 상위 20 담보", "RPT_CY_TOPL", True))
+        Array("2-1. " & lc & " · 심사유형별 (비교: " & cmp & ")", "RPT_C_UW", False), _
+        Array("2-2. " & lc & " · 대급부별 (비교: " & cmp & ")", "RPT_C_BEN", False), _
+        Array("2-3. " & lc & " · 위험보험료 상위 20 담보", "RPT_C_TOPP", True), _
+        Array("2-4. " & lc & " · 손해율 상위 20 담보", "RPT_C_TOPL", True), _
+        Array("3-1. " & lm & " · 심사유형별 (비교: " & cmp & ")", "RPT_M_UW", True), _
+        Array("3-2. " & lm & " · 대급부별 (비교: " & cmp & ")", "RPT_M_BEN", False), _
+        Array("3-3. " & lm & " · 위험보험료 상위 20 담보", "RPT_M_TOPP", True), _
+        Array("3-4. " & lm & " · 손해율 상위 20 담보", "RPT_M_TOPL", True))
 
     On Error GoTo Fail
     Set wdApp = CreateObject("Word.Application")
@@ -187,10 +192,10 @@ Public Sub MakeWordReport()
     AddText doc, baseTxt & " 기준 손해율 결산 리포트", 20, True, 1, False
     AddText doc, "마감 기준월 " & baseTxt & "  |  작성일 " & Format(Date, "yyyy.mm.dd") & _
                  "  |  금액 단위 백만원", 9, False, 1, False
-    AddText doc, "UY 누적: " & ThisWorkbook.Names("PERIOD_UY").RefersToRange.Value & "  /  CY 당월: " & _
-                 ThisWorkbook.Names("PERIOD_CY").RefersToRange.Value, 9, False, 1, False
-    AddText doc, "※ 손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료,  증감(p) = 당해 손해율 - 전년 동기 손해율 (빨강: 악화 / 파랑: 개선)", _
+    AddText doc, lc & "  /  " & lm & "  /  비교기간 " & cmp, 9, False, 1, False
+    AddText doc, "※ 손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료,  증감(p) = 당기 손해율 - 비교기간 손해율 (빨강: 악화 / 파랑: 개선)", _
             8, False, 0, False
+    AddText doc, NameValue("NOTE_CMP"), 8, False, 0, False
 
     For i = LBound(blocks) To UBound(blocks)
         AddText doc, CStr(blocks(i)(0)), 12, True, 0, CBool(blocks(i)(2))
@@ -207,6 +212,10 @@ Fail:
     MsgBox "워드 리포트 생성 중 오류: " & Err.Description & vbCrLf & _
            "(같은 이름의 docx가 열려 있으면 닫고 다시 실행하세요)", vbCritical
 End Sub
+
+Private Function NameValue(nm As String) As String
+    NameValue = CStr(ThisWorkbook.Names(nm).RefersToRange.Value)
+End Function
 
 ' 문서 끝에 문단 추가 (align: 0=왼쪽, 1=가운데)
 Private Sub AddText(doc As Object, txt As String, sz As Single, isBold As Boolean, _

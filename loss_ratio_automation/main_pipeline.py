@@ -2,8 +2,14 @@
 손해율 월말 집계 및 워드 리포트 자동화 — 메인 파이프라인
 
   1) 로데이터 + 담보 마스터 Left Join (담보코드 기준, VLOOKUP 대체)
-  2) UY 누적 / CY 당월 손해율 산출 (당해 + 전년 동기)
-  3) 담보별 전년 동기 대비 위험보험료 증감률(%) · 손해율 증감(%p)
+  2) UY 누적 / UY 당월 / 전기간 누적 손해율 산출 (당기 + 비교기간)
+  3) 담보별 비교기간(동기간) 대비 위험보험료 증감률(%) · 손해율 증감(%p)
+
+  [정의] 기준월 202609 예시
+    UY 누적   : 계약 202601~202609, 마감 202609 까지 누적
+    UY 당월   : 계약 202601~202609, 마감 202609 한 달
+    전기간 누적: 계약 출시월(202505)~202609, 마감 202609 까지 누적
+    비교기간  : 계약 구간·마감월을 1개월 앞당김 → 계약 202512~202608, 마감 202608
   4) Top 20 추출 (위험보험료 상위 / 손해율 상위)
   5) MS Word(.docx) 리포트 출력
 
@@ -37,8 +43,9 @@ RAW_FILE = DATA_DIR / os.environ.get("LR_RAW_FILE", "raw_data.csv")
 MASTER_FILE = DATA_DIR / os.environ.get("LR_MASTER_FILE", "code_master.csv")
 REPORT_FILE = OUTPUT_DIR / "monthly_loss_report.docx"
 
-BASE_YM = "202509"        # 마감 기준월 (CY 당월 = 이 달, UY 누적 = 이 달까지)
-UY_START_YM = "202506"    # UY 누적 대상 계약년월 시작
+BASE_YM = "202609"        # 마감 기준월
+LAUNCH_YM = "202505"      # 출시월 (전기간 누적 시작)
+CMP_SHIFT_MONTHS = 1      # 비교기간 = 계약 구간·마감월을 이만큼 앞당김
 TOP_N = 20
 # 손해율 Top N 은 위험보험료가 작은 담보의 극단값을 피하기 위해
 # 전체 위험보험료 대비 비중이 이 값 이상인 담보만 대상으로 한다 (0 이면 제한 없음)
@@ -100,7 +107,7 @@ def to_period(ym: str) -> pd.Period:
 
 
 def fmt_ym(p: pd.Period) -> str:
-    return f"{p.year % 100:02d}.{p.month:02d}"
+    return f"{p.year}.{p.month:02d}"
 
 
 def load_data() -> pd.DataFrame:
@@ -139,7 +146,7 @@ def load_data() -> pd.DataFrame:
 
 
 # =============================================================================
-# 2. UY / CY 필터 & 집계
+# 2. 구간 필터 & 집계
 # =============================================================================
 @dataclass
 class Window:
@@ -148,32 +155,44 @@ class Window:
     prev: pd.DataFrame
     cur_desc: str
     prev_desc: str
+    detail: bool = True        # 심사유형·대급부·Top20 상세 섹션 출력 여부
 
 
-def uy_filter(df: pd.DataFrame, start: pd.Period, base: pd.Period) -> pd.DataFrame:
-    """UY 누적: 계약년월 ∈ [start, base] 인 계약의 마감 base 까지 누적 실적."""
-    return df[(df["_cym"] >= start) & (df["_cym"] <= base) & (df["_clym"] <= base)]
+def cum_filter(df: pd.DataFrame, start: pd.Period, end: pd.Period, close: pd.Period) -> pd.DataFrame:
+    """누적: 계약년월 ∈ [start, end] 인 계약의 마감 close 까지 누적 실적."""
+    return df[(df["_cym"] >= start) & (df["_cym"] <= end) & (df["_clym"] <= close)]
 
 
-def cy_filter(df: pd.DataFrame, base: pd.Period) -> pd.DataFrame:
-    """CY 당월: 마감년월 == base 인 한 달 실적 (계약년월 무관)."""
-    return df[df["_clym"] == base]
+def month_filter(df: pd.DataFrame, start: pd.Period, end: pd.Period, close: pd.Period) -> pd.DataFrame:
+    """당월: 계약년월 ∈ [start, end] 인 계약의 마감월 close 한 달 실적."""
+    return df[(df["_cym"] >= start) & (df["_cym"] <= end) & (df["_clym"] == close)]
 
 
-def build_windows(df: pd.DataFrame, base: pd.Period, uy_start: pd.Period) -> list[Window]:
-    pb, ps = base - 12, uy_start - 12
+def uy_label(start: pd.Period, end: pd.Period) -> str:
+    """UY26.1~9 / UY25.12~26.8 형식."""
+    if start.year == end.year:
+        return f"UY{start.year % 100}.{start.month}~{end.month}"
+    return f"UY{start.year % 100}.{start.month}~{end.year % 100}.{end.month}"
+
+
+def build_windows(df: pd.DataFrame, base: pd.Period, launch: pd.Period) -> list[Window]:
+    s = pd.Period(year=base.year, month=1, freq="M")      # UY 시작 = 기준연도 1월
+    k = CMP_SHIFT_MONTHS
+    cs, ce, cc = s - k, base - k, base - k                 # 비교기간
     windows = [
-        Window("UY 누적", uy_filter(df, uy_start, base), uy_filter(df, ps, pb),
-               f"{fmt_ym(uy_start)}~{fmt_ym(base)} 계약, {fmt_ym(base)} 마감 누적",
-               f"{fmt_ym(ps)}~{fmt_ym(pb)} 계약, {fmt_ym(pb)} 마감 누적"),
-        Window("CY 당월", cy_filter(df, base), cy_filter(df, pb),
-               f"{fmt_ym(base)} 마감월", f"{fmt_ym(pb)} 마감월"),
+        Window("UY 누적", cum_filter(df, s, base, base), cum_filter(df, cs, ce, cc),
+               f"{uy_label(s, base)} 누적 ({fmt_ym(base)} 마감)", f"{uy_label(cs, ce)} 누적 ({fmt_ym(cc)} 마감)"),
+        Window("UY 당월", month_filter(df, s, base, base), month_filter(df, cs, ce, cc),
+               f"{uy_label(s, base)} 계약의 {fmt_ym(base)} 당월", f"{uy_label(cs, ce)} 계약의 {fmt_ym(cc)} 당월"),
+        Window("전기간 누적", cum_filter(df, launch, base, base), cum_filter(df, launch, ce, cc),
+               f"출시({fmt_ym(launch)})~{fmt_ym(base)} 계약 누적", f"출시~{fmt_ym(ce)} 계약 누적 ({fmt_ym(cc)} 마감)",
+               detail=False),
     ]
     for w in windows:
         if w.cur.empty:
-            raise ValueError(f"{w.label} 당해 데이터가 없습니다 ({w.cur_desc})")
+            raise ValueError(f"{w.label} 당기 데이터가 없습니다 ({w.cur_desc})")
         if w.prev.empty:
-            print(f"[경고] {w.label} 전년 동기 데이터가 없습니다 ({w.prev_desc}) → 증감 공란")
+            print(f"[경고] {w.label} 비교기간 데이터가 없습니다 ({w.prev_desc}) → 증감 공란")
     return windows
 
 
@@ -188,7 +207,7 @@ def totals(d: pd.DataFrame) -> dict:
 
 
 def compare(cur: pd.DataFrame, prev: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
-    """keys 단위로 당해/전년 집계 후 증감 계산."""
+    """keys 단위로 당기/비교기간 집계 후 증감 계산."""
     agg = lambda d: d.groupby(keys, dropna=False)[["_prem", "_loss"]].sum()
     out = agg(cur).join(agg(prev), how="outer", rsuffix="_py").fillna(0).reset_index()
     out["lr"] = loss_ratio(out["_loss"], out["_prem"])
@@ -333,7 +352,7 @@ def note(doc, text):
 def summary_section(doc, windows: list[Window]):
     heading(doc, "1. 핵심 요약 (전사)")
     headers = ["구분", "기간", f"위험보험료({AMOUNT_UNIT_LABEL})", f"손해액({AMOUNT_UNIT_LABEL})",
-               "손해율", "전년 손해율", "위험보험료 증감률", "손해율 증감"]
+               "손해율", "비교기간 손해율", "위험보험료 증감률", "손해율 증감"]
     rows, colors = [], []
     for w in windows:
         c, p = totals(w.cur), totals(w.prev)
@@ -345,7 +364,7 @@ def summary_section(doc, windows: list[Window]):
     add_table(doc, headers, rows,
               ["center", "left", "right", "right", "right", "right", "right", "right"],
               [2.0, 5.6, 3.3, 3.0, 2.0, 2.2, 3.4, 2.6], colors)
-    note(doc, f"※ 전년 동기: UY {windows[0].prev_desc} / CY {windows[1].prev_desc}")
+    note(doc, "※ 비교기간: " + " / ".join(f"{w.label} {w.prev_desc}" for w in windows))
 
 
 def breakdown_section(doc, w: Window, key: str, title: str):
@@ -397,11 +416,11 @@ def build_report(windows: list[Window], base: pd.Period, out_path: Path) -> None
     set_font(p.add_run(f"마감 기준월 {base.year}.{base.month:02d}  |  작성일 {date.today():%Y.%m.%d}  |  "
                        f"금액 단위 {AMOUNT_UNIT_LABEL}"), size=9, color=RGBColor(0x59, 0x59, 0x59))
     note(doc, "※ 손해율 = (지급보험금 + 지급비금변동분) ÷ 위험보험료 × 100,  "
-              "증감(p) = 당해 손해율 − 전년 동기 손해율 (빨강: 악화 / 파랑: 개선)")
+              "증감(p) = 당기 손해율 − 비교기간 손해율 (빨강: 악화 / 파랑: 개선)")
 
     summary_section(doc, windows)
 
-    for i, w in enumerate(windows, start=2):
+    for i, w in enumerate([w for w in windows if w.detail], start=2):
         heading(doc, f"{i}. {w.label} 손해율 ({w.cur_desc})", new_page=i > 2)
         breakdown_section(doc, w, COL["uw_type"], f"{i}-1. 심사유형별")
         breakdown_section(doc, w, M_BENEFIT, f"{i}-2. 대급부별")
@@ -421,28 +440,26 @@ def build_report(windows: list[Window], base: pd.Period, out_path: Path) -> None
 def main() -> None:
     ap = argparse.ArgumentParser(description="손해율 월말 집계 및 워드 리포트 생성")
     ap.add_argument("--base", default=BASE_YM, help="마감 기준월 (예: 202509)")
-    ap.add_argument("--uy-start", default=UY_START_YM, help="UY 누적 계약년월 시작 (예: 202506)")
+    ap.add_argument("--launch", default=LAUNCH_YM, help="출시월 (예: 202505)")
     ap.add_argument("--out", default=str(REPORT_FILE), help="출력 docx 경로")
     args = ap.parse_args()
 
-    base, uy_start = to_period(args.base), to_period(args.uy_start)
-    if uy_start > base:
-        raise ValueError("--uy-start 는 --base 보다 늦을 수 없습니다")
+    base, launch = to_period(args.base), to_period(args.launch)
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     df = load_data()
-    windows = build_windows(df, base, uy_start)
+    windows = build_windows(df, base, launch)
 
     for w in windows:
         c, p = totals(w.cur), totals(w.prev)
         print(f"[{w.label}] 위험보험료 {c['prem']:,.0f} / 손해액 {c['loss']:,.0f} / "
-              f"손해율 {c['lr']:.2f}% (전년 {p['lr']:.2f}%, {c['lr'] - p['lr']:+.2f}%p)")
+              f"손해율 {c['lr']:.2f}% (비교 {p['lr']:.2f}%, {c['lr'] - p['lr']:+.2f}%p)")
         # 검증용 담보별 집계 CSV
         by_code(w).rename(columns={"_prem": "위험보험료", "_loss": "손해액",
-                                   "_prem_py": "전년_위험보험료", "_loss_py": "전년_손해액",
-                                   "lr": "손해율", "lr_py": "전년_손해율",
+                                   "_prem_py": "비교_위험보험료", "_loss_py": "비교_손해액",
+                                   "lr": "손해율", "lr_py": "비교_손해율",
                                    "prem_chg_pct": "위험보험료_증감률", "lr_chg_p": "손해율_증감p"}) \
-            .to_csv(OUTPUT_DIR / f"by_code_{w.label.split()[0]}_{fmt_ym(base)}.csv",
+            .to_csv(OUTPUT_DIR / f"by_code_{w.label.replace(" ", "")}_{base.year}{base.month:02d}.csv",
                     index=False, encoding="utf-8-sig")
 
     build_report(windows, base, Path(args.out))
