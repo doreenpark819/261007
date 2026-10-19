@@ -143,9 +143,11 @@ def main(path):
             for j, c in enumerate(cols):
                 chk(f"표{ti - 1} {nm} {c}", rr[3 + j], None if pd.isna(e[c]) else float(e[c]))
         if ti == 2:
-            col_exp = {nm: (1 if (not pd.isna(e["diff"]) and e["diff"] > 0) else
-                            2 if (not pd.isna(e.lra) and not pd.isna(e.lrap) and e.lra > e.lrap) else 0)
-                       for nm, e in t.iterrows()}
+            def c1(e):
+                new = not pd.isna(e["diff"]) and e["diff"] > 0
+                cum = not pd.isna(e.lra) and not pd.isna(e.lrap) and e.lra > e.lrap
+                return 1 if new and not cum else 2 if cum and not new else 0
+            col_exp = {nm: c1(e) for nm, e in t.iterrows()}
         elif ti == 3:
             col_exp = {nm: (1 if e["diff"] > 0 else 2 if e["diff"] < 0 else 0) for nm, e in t.iterrows()}
         else:
