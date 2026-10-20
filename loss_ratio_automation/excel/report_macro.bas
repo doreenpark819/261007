@@ -3,11 +3,13 @@ Option Explicit
 ' =====================================================================
 '  손해율 월말 보고서 매크로 (Word 참조 설정 불필요)
 '   LoadRawData    : 로데이터 파일 선택 → raw_data 시트 교체 + 형식 자동 정리
+'   LoadCodeMaster : 담보 마스터 파일 선택 → code_master 시트 A~E열 교체 (행·시트 삭제 없이)
 '   MakeWordReport : '보고서' 시트를 위에서부터 읽어 워드(.docx) 생성
 '                    (A열 태그: H1 H2 BUL CAP UNIT LEG NOTE PB TBL END)
 ' =====================================================================
 
 Private Const RAW_SHEET As String = "raw_data"
+Private Const MST_SHEET As String = "code_master"
 Private Const RPT_SHEET As String = "보고서"
 Private Const N_COLS As Long = 11
 Private Const FONT_NAME As String = "맑은 고딕"
@@ -69,6 +71,81 @@ Fail:
     Application.ScreenUpdating = True
     MsgBox "불러오기 실패: " & Err.Description, vbCritical
 End Sub
+
+' ---------------------------------------------------------------------
+' 1-2) 담보 마스터 불러오기 (A 담보코드 | B 담보명=급부 | C 대급부명 | D 구분 | E 고당대통)
+' ---------------------------------------------------------------------
+Public Sub LoadCodeMaster()
+    Dim fn As Variant, src As Workbook, data As Variant
+    Dim ws As Worksheet, nRows As Long, ext As String, i As Long, j As Long
+
+    fn = Application.GetOpenFilename("담보 마스터 (*.xlsx;*.xlsb;*.xls;*.csv),*.xlsx;*.xlsb;*.xls;*.csv", , _
+                                     "담보 마스터 파일 선택 (1행 헤더, A 담보코드 / B 담보명 / C 대급부명 / D 구분 / E 고당대통)")
+    If VarType(fn) = vbBoolean Then Exit Sub
+    ext = LCase(Right(fn, 4))
+
+    Application.ScreenUpdating = False
+    Application.DisplayAlerts = False
+    On Error GoTo Fail
+
+    If ext = ".csv" Then
+        Workbooks.OpenText Filename:=fn, DataType:=xlDelimited, TextQualifier:=xlTextQualifierDoubleQuote, _
+            Comma:=True, Local:=True, _
+            FieldInfo:=Array(Array(1, 2), Array(2, 2), Array(3, 2), Array(4, 2), Array(5, 2))
+        Set src = ActiveWorkbook
+    Else
+        Set src = Workbooks.Open(Filename:=fn, ReadOnly:=True, UpdateLinks:=0)
+    End If
+
+    With src.Worksheets(1)
+        nRows = .Cells(.Rows.Count, 1).End(xlUp).Row          ' A열(담보코드) 기준 마지막 행
+        data = .Range("A1").Resize(nRows, 5).Value
+    End With
+    src.Close SaveChanges:=False
+
+    ' 코드·이름 앞뒤 공백 제거
+    For i = 2 To nRows
+        For j = 1 To 5
+            If VarType(data(i, j)) = vbString Then data(i, j) = Trim(data(i, j))
+        Next j
+    Next i
+
+    Set ws = ThisWorkbook.Worksheets(MST_SHEET)
+    Application.Calculation = xlCalculationManual
+    ws.Range("A2:E" & ws.Rows.Count).ClearContents          ' 행 삭제가 아니라 내용만 지움 (참조 깨짐 방지)
+    ws.Range("A:A").NumberFormat = "@"                       ' 앞자리 0 보존
+    If nRows >= 2 Then
+        ws.Range("A2").Resize(nRows - 1, 5).Value = SubArray(data, 2, nRows, 5)
+    End If
+    Erase data
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.CalculateFull
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+
+    ThisWorkbook.Worksheets("실행").Activate
+    MsgBox "담보 마스터 " & Format(nRows - 1, "#,##0") & "건을 불러왔습니다." & vbCrLf & _
+           "데이터 점검 종합 상태: " & ThisWorkbook.Names("CHECK_STATUS").RefersToRange.Value, vbInformation
+    Exit Sub
+Fail:
+    Application.Calculation = xlCalculationAutomatic
+    Application.DisplayAlerts = True
+    Application.ScreenUpdating = True
+    MsgBox "마스터 불러오기 실패: " & Err.Description, vbCritical
+End Sub
+
+' 2차원 배열에서 r1~r2 행, 1~nC 열만 잘라 새 배열로
+Private Function SubArray(a As Variant, r1 As Long, r2 As Long, nC As Long) As Variant
+    Dim b() As Variant, i As Long, j As Long
+    ReDim b(1 To r2 - r1 + 1, 1 To nC)
+    For i = r1 To r2
+        For j = 1 To nC
+            b(i - r1 + 1, j) = a(i, j)
+        Next j
+    Next i
+    SubArray = b
+End Function
 
 ' ---------------------------------------------------------------------
 ' raw_data 형식 정리: 년월·금액 텍스트 → 숫자, 코드 공백 제거
