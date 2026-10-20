@@ -281,15 +281,16 @@ def sheet_code(wb):
         cell(ws, f"{get_column_letter(j)}1", h, F(9, True), FILL_HDR, CENTER, None, BORDER)
     widths(ws, [10, 30, 11, 9, 7] + [13] * 9 + [8, 9, 6])
     ws.row_dimensions[1].height = 30
-    m = MST + "!"
+    # code_master 는 열 전체 + ROW() 로 참조 → 마스터에서 행을 삭제·삽입해도 #REF! 가 나지 않음
+    mc = lambda col: f"INDEX({MST}!${col}:${col},ROW())"
     for r in range(2, CL + 1):
         ea, eb = esc(f"$A{r}"), esc(f"$B{r}")
         g = f"{R}$G:$G,{ea}"
-        ws[f"A{r}"] = f'=IF(TRIM({m}$A{r}&"")="","",{m}$A{r})'
-        ws[f"B{r}"] = f'=IF($A{r}="","",TRIM({m}$B{r}&""))'
-        ws[f"C{r}"] = f'=IF($A{r}="","",TRIM({m}$C{r}&""))'
-        ws[f"D{r}"] = f'=IF($A{r}="","",IF(TRIM({m}$D{r}&"")="",C{r},TRIM({m}$D{r}&"")))'
-        ws[f"E{r}"] = f'=IF($A{r}="","",IF(UPPER(TRIM({m}$E{r}&""))="Y",1,0))'
+        ws[f"A{r}"] = f'=IF(TRIM({mc("A")}&"")="","",{mc("A")})'
+        ws[f"B{r}"] = f'=IF($A{r}="","",TRIM({mc("B")}&""))'
+        ws[f"C{r}"] = f'=IF($A{r}="","",TRIM({mc("C")}&""))'
+        ws[f"D{r}"] = f'=IF($A{r}="","",IF(TRIM({mc("D")}&"")="",C{r},TRIM({mc("D")}&"")))'
+        ws[f"E{r}"] = f'=IF($A{r}="","",IF(UPPER(TRIM({mc("E")}&""))="Y",1,0))'
         for col, w in zip("FGHIJKLM", ["UC", "UC", "UCC", "UCC", "ALL", "ALL", "ALLP", "ALLP"]):
             expr = prem(w, "," + g) if col in "FHJL" else loss(w, "," + g)
             ws[f"{col}{r}"] = f'=IF($A{r}="","",{expr})'
