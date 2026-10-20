@@ -660,6 +660,20 @@ def sheet_master(wb, master: pd.DataFrame):
          F(9, color="595959"))
 
 
+def sheet_macro(wb):
+    """VBA 코드 사본 (.bas/.txt 반입이 막힐 때 복사·붙여넣기용)."""
+    ws = wb.create_sheet("매크로코드")
+    widths(ws, [120])
+    cell(ws, "A1", "매크로 설치(파일 반입이 막힐 때): 아래 A3부터 마지막 줄까지 선택 → 복사 → Alt+F11 → 삽입 → 모듈 → 붙여넣기 → "
+                   ".xlsm으로 저장", F(10, True, "C00000"))
+    lines = (BASE / "excel" / "report_macro.bas").read_text(encoding="cp949").splitlines()
+    for i, line in enumerate([l for l in lines if not l.startswith("Attribute ")], start=3):
+        c = ws.cell(i, 1)
+        c.value = line if line else None
+        c.data_type = "s"
+        c.font = Font(name="Consolas", size=10)
+
+
 def main():
     raw = pd.read_csv(BASE / "data" / "raw_data.csv",
                       dtype={"주상품코드": str, "특약상품코드": str, "담보코드": str})
@@ -671,6 +685,7 @@ def main():
     sheet_code(wb)
     sheet_raw(wb, raw[RAW_COLS])
     sheet_master(wb, master[MST_COLS])
+    sheet_macro(wb)
     wb.calculation.fullCalcOnLoad = True
     OUT.parent.mkdir(exist_ok=True)
     wb.save(OUT)
