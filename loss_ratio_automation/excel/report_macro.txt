@@ -1,29 +1,46 @@
 Attribute VB_Name = "LossRatioReport"
 Option Explicit
 ' =====================================================================
-'  손해율 월말 보고서 매크로 (Word 참조 설정 불필요)
-'   LoadRawData    : 로데이터 파일 선택 → raw_data 시트 교체 + 형식 자동 정리
-'   LoadCodeMaster : 담보 마스터 파일 선택 → code_master 시트 A~E열 교체 (행·시트 삭제 없이)
-'   MakeWordReport : '보고서' 시트를 위에서부터 읽어 워드(.docx) 생성
-'                    (A열 태그: H1 H2 BUL CAP UNIT LEG NOTE PB TBL END)
 ' =====================================================================
 
 Private Const RAW_SHEET As String = "raw_data"
 Private Const MST_SHEET As String = "code_master"
-Private Const RPT_SHEET As String = "보고서"
 Private Const N_COLS As Long = 11
-Private Const FONT_NAME As String = "맑은 고딕"
 Private wd As Object
 
+' Decode "\uXXXX" escapes (keeps this file ASCII-only so encoding never breaks)
+Private Function T(ByVal s As String) As String
+    Dim i As Long, o As String
+    i = 1
+    Do While i <= Len(s)
+        If Mid$(s, i, 2) = "\u" Then
+            o = o & ChrW(CLng("&H" & Mid$(s, i + 2, 4) & "&"))
+            i = i + 6
+        Else
+            o = o & Mid$(s, i, 1)
+            i = i + 1
+        End If
+    Loop
+    T = o
+End Function
+
+Private Function RPT_SHEET() As String
+    RPT_SHEET = T("\uBCF4\uACE0\uC11C")
+End Function
+
+Private Function FONT_NAME() As String
+    FONT_NAME = T("\uB9D1\uC740 \uACE0\uB515")
+End Function
+
+
 ' ---------------------------------------------------------------------
-' 1) 로데이터 불러오기
 ' ---------------------------------------------------------------------
 Public Sub LoadRawData()
     Dim fn As Variant, src As Workbook, data As Variant
     Dim ws As Worksheet, nRows As Long, ext As String
 
-    fn = Application.GetOpenFilename("로데이터 (*.xlsx;*.xlsb;*.xls;*.csv;*.txt),*.xlsx;*.xlsb;*.xls;*.csv;*.txt", , _
-                                     "로데이터 파일 선택 (1행 헤더, A~J 10개 열 + K열 건수)")
+    fn = Application.GetOpenFilename(T("\uB85C\uB370\uC774\uD130 (*.xlsx;*.xlsb;*.xls;*.csv;*.txt),*.xlsx;*.xlsb;*.xls;*.csv;*.txt"), , _
+                                     T("\uB85C\uB370\uC774\uD130 \uD30C\uC77C \uC120\uD0DD (1\uD589 \uD5E4\uB354, A~J 10\uAC1C \uC5F4 + K\uC5F4 \uAC74\uC218)"))
     If VarType(fn) = vbBoolean Then Exit Sub
     ext = LCase(Right(fn, 4))
 
@@ -32,7 +49,6 @@ Public Sub LoadRawData()
     On Error GoTo Fail
 
     If ext = ".csv" Or ext = ".txt" Then
-        ' 코드 열(C,D,G)은 텍스트로 읽어 앞자리 0 보존
         Workbooks.OpenText Filename:=fn, DataType:=xlDelimited, TextQualifier:=xlTextQualifierDoubleQuote, _
             Comma:=(ext = ".csv"), Tab:=(ext = ".txt"), Local:=True, _
             FieldInfo:=Array(Array(1, 1), Array(2, 1), Array(3, 2), Array(4, 2), Array(5, 1), Array(6, 1), _
@@ -43,7 +59,7 @@ Public Sub LoadRawData()
     End If
 
     With src.Worksheets(1)
-        nRows = .Cells(.Rows.Count, 7).End(xlUp).Row          ' G열(담보코드) 기준 마지막 행
+        nRows = .Cells(.Rows.Count, 7).End(xlUp).Row
         data = .Range("A1").Resize(nRows, N_COLS).Value
     End With
     src.Close SaveChanges:=False
@@ -61,26 +77,25 @@ Public Sub LoadRawData()
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
 
-    ThisWorkbook.Worksheets("실행").Activate
-    MsgBox Format(nRows - 1, "#,##0") & "행을 불러왔습니다." & vbCrLf & _
-           "데이터 점검 종합 상태: " & ThisWorkbook.Names("CHECK_STATUS").RefersToRange.Value, vbInformation
+    ThisWorkbook.Worksheets(T("\uC2E4\uD589")).Activate
+    MsgBox Format(nRows - 1, "#,##0") & T("\uD589\uC744 \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4.") & vbCrLf & _
+           T("\uB370\uC774\uD130 \uC810\uAC80 \uC885\uD569 \uC0C1\uD0DC: ") & ThisWorkbook.Names("CHECK_STATUS").RefersToRange.Value, vbInformation
     Exit Sub
 Fail:
     Application.Calculation = xlCalculationAutomatic
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "불러오기 실패: " & Err.Description, vbCritical
+    MsgBox T("\uBD88\uB7EC\uC624\uAE30 \uC2E4\uD328: ") & Err.Description, vbCritical
 End Sub
 
 ' ---------------------------------------------------------------------
-' 1-2) 담보 마스터 불러오기 (A 담보코드 | B 담보명=급부 | C 대급부명 | D 구분 | E 고당대통)
 ' ---------------------------------------------------------------------
 Public Sub LoadCodeMaster()
     Dim fn As Variant, src As Workbook, data As Variant
     Dim ws As Worksheet, nRows As Long, ext As String, i As Long, j As Long
 
-    fn = Application.GetOpenFilename("담보 마스터 (*.xlsx;*.xlsb;*.xls;*.csv),*.xlsx;*.xlsb;*.xls;*.csv", , _
-                                     "담보 마스터 파일 선택 (1행 헤더, A 담보코드 / B 담보명 / C 대급부명 / D 구분 / E 고당대통)")
+    fn = Application.GetOpenFilename(T("\uB2F4\uBCF4 \uB9C8\uC2A4\uD130 (*.xlsx;*.xlsb;*.xls;*.csv),*.xlsx;*.xlsb;*.xls;*.csv"), , _
+                                     T("\uB2F4\uBCF4 \uB9C8\uC2A4\uD130 \uD30C\uC77C \uC120\uD0DD (1\uD589 \uD5E4\uB354, A \uB2F4\uBCF4\uCF54\uB4DC / B \uB2F4\uBCF4\uBA85 / C \uB300\uAE09\uBD80\uBA85 / D \uAD6C\uBD84 / E \uACE0\uB2F9\uB300\uD1B5)"))
     If VarType(fn) = vbBoolean Then Exit Sub
     ext = LCase(Right(fn, 4))
 
@@ -98,12 +113,11 @@ Public Sub LoadCodeMaster()
     End If
 
     With src.Worksheets(1)
-        nRows = .Cells(.Rows.Count, 1).End(xlUp).Row          ' A열(담보코드) 기준 마지막 행
+        nRows = .Cells(.Rows.Count, 1).End(xlUp).Row
         data = .Range("A1").Resize(nRows, 5).Value
     End With
     src.Close SaveChanges:=False
 
-    ' 코드·이름 앞뒤 공백 제거
     For i = 2 To nRows
         For j = 1 To 5
             If VarType(data(i, j)) = vbString Then data(i, j) = Trim(data(i, j))
@@ -112,8 +126,8 @@ Public Sub LoadCodeMaster()
 
     Set ws = ThisWorkbook.Worksheets(MST_SHEET)
     Application.Calculation = xlCalculationManual
-    ws.Range("A2:E" & ws.Rows.Count).ClearContents          ' 행 삭제가 아니라 내용만 지움 (참조 깨짐 방지)
-    ws.Range("A:A").NumberFormat = "@"                       ' 앞자리 0 보존
+    ws.Range("A2:E" & ws.Rows.Count).ClearContents
+    ws.Range("A:A").NumberFormat = "@"
     If nRows >= 2 Then
         ws.Range("A2").Resize(nRows - 1, 5).Value = SubArray(data, 2, nRows, 5)
     End If
@@ -124,18 +138,17 @@ Public Sub LoadCodeMaster()
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
 
-    ThisWorkbook.Worksheets("실행").Activate
-    MsgBox "담보 마스터 " & Format(nRows - 1, "#,##0") & "건을 불러왔습니다." & vbCrLf & _
-           "데이터 점검 종합 상태: " & ThisWorkbook.Names("CHECK_STATUS").RefersToRange.Value, vbInformation
+    ThisWorkbook.Worksheets(T("\uC2E4\uD589")).Activate
+    MsgBox T("\uB2F4\uBCF4 \uB9C8\uC2A4\uD130 ") & Format(nRows - 1, "#,##0") & T("\uAC74\uC744 \uBD88\uB7EC\uC654\uC2B5\uB2C8\uB2E4.") & vbCrLf & _
+           T("\uB370\uC774\uD130 \uC810\uAC80 \uC885\uD569 \uC0C1\uD0DC: ") & ThisWorkbook.Names("CHECK_STATUS").RefersToRange.Value, vbInformation
     Exit Sub
 Fail:
     Application.Calculation = xlCalculationAutomatic
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "마스터 불러오기 실패: " & Err.Description, vbCritical
+    MsgBox T("\uB9C8\uC2A4\uD130 \uBD88\uB7EC\uC624\uAE30 \uC2E4\uD328: ") & Err.Description, vbCritical
 End Sub
 
-' 2차원 배열에서 r1~r2 행, 1~nC 열만 잘라 새 배열로
 Private Function SubArray(a As Variant, r1 As Long, r2 As Long, nC As Long) As Variant
     Dim b() As Variant, i As Long, j As Long
     ReDim b(1 To r2 - r1 + 1, 1 To nC)
@@ -148,7 +161,6 @@ Private Function SubArray(a As Variant, r1 As Long, r2 As Long, nC As Long) As V
 End Function
 
 ' ---------------------------------------------------------------------
-' raw_data 형식 정리: 년월·금액 텍스트 → 숫자, 코드 공백 제거
 ' ---------------------------------------------------------------------
 Private Sub CleanRawData()
     Dim ws As Worksheet, nRows As Long, c As Variant
@@ -156,16 +168,16 @@ Private Sub CleanRawData()
     nRows = ws.Cells(ws.Rows.Count, 7).End(xlUp).Row
     If nRows < 2 Then Exit Sub
 
-    For Each c In Array(1, 2)                 ' 계약년월, 마감년월 → YYYYMM 숫자
+    For Each c In Array(1, 2)
         FixColumn ws.Range(ws.Cells(2, c), ws.Cells(nRows, c)), True, False
     Next c
-    For Each c In Array(5, 8, 9, 10)          ' 경과개월수, 금액 → 숫자 (빈칸은 0)
+    For Each c In Array(5, 8, 9, 10)
         FixColumn ws.Range(ws.Cells(2, c), ws.Cells(nRows, c)), False, True
     Next c
     If Application.WorksheetFunction.CountA(ws.Range(ws.Cells(2, 11), ws.Cells(nRows, 11))) > 0 Then
-        FixColumn ws.Range(ws.Cells(2, 11), ws.Cells(nRows, 11)), False, True     ' 건수 (있을 때만)
+        FixColumn ws.Range(ws.Cells(2, 11), ws.Cells(nRows, 11)), False, True
     End If
-    For Each c In Array(3, 4, 6, 7)           ' 코드·심사유형 → 앞뒤 공백 제거
+    For Each c In Array(3, 4, 6, 7)
         TrimColumn ws.Range(ws.Cells(2, c), ws.Cells(nRows, c))
     Next c
 End Sub
@@ -173,18 +185,18 @@ End Sub
 Private Sub FixColumn(rng As Range, isYM As Boolean, blankToZero As Boolean)
     Dim v As Variant, i As Long, s As String, k As Long, d As String
     v = rng.Value
-    If Not IsArray(v) Then v = OneCell(v)                   ' 데이터가 1행뿐인 경우
+    If Not IsArray(v) Then v = OneCell(v)
     For i = 1 To UBound(v, 1)
         If VarType(v(i, 1)) = vbDate Then
-            v(i, 1) = Year(v(i, 1)) * 100 + Month(v(i, 1))   ' 날짜로 바뀐 년월
+            v(i, 1) = Year(v(i, 1)) * 100 + Month(v(i, 1))
         ElseIf VarType(v(i, 1)) = vbString Then
             s = Trim(Replace(v(i, 1), ",", ""))
-            If isYM Then                                       ' 2026.08 / 2026-08 / '202608 → 202608
+            If isYM Then
                 d = ""
                 For k = 1 To Len(s)
                     If Mid(s, k, 1) Like "#" Then d = d & Mid(s, k, 1)
                 Next k
-                If Len(d) = 5 Then d = Left(d, 4) & "0" & Right(d, 1)   ' 2026.8 → 202608
+                If Len(d) = 5 Then d = Left(d, 4) & "0" & Right(d, 1)
                 If Len(d) = 6 Then v(i, 1) = CLng(d)
             ElseIf s = "" Or s = "-" Then
                 v(i, 1) = 0
@@ -216,7 +228,6 @@ Private Sub TrimColumn(rng As Range)
 End Sub
 
 ' ---------------------------------------------------------------------
-' 2) 워드 보고서 생성
 ' ---------------------------------------------------------------------
 Public Sub MakeWordReport()
     Dim doc As Object, ws As Worksheet
@@ -228,15 +239,15 @@ Public Sub MakeWordReport()
     Application.CalculateFull
 
     status = ThisWorkbook.Names("CHECK_STATUS").RefersToRange.Value
-    If status = "오류" Then
+    If status = T("\uC624\uB958") Then
         Application.ScreenUpdating = True
-        ThisWorkbook.Worksheets("실행").Activate
-        MsgBox "데이터 점검에 '오류'가 있습니다. 실행 시트의 ④ 데이터 점검을 확인하세요.", vbExclamation
+        ThisWorkbook.Worksheets(T("\uC2E4\uD589")).Activate
+        MsgBox T("\uB370\uC774\uD130 \uC810\uAC80\uC5D0 '\uC624\uB958'\uAC00 \uC788\uC2B5\uB2C8\uB2E4. \uC2E4\uD589 \uC2DC\uD2B8\uC758 \u2463 \uB370\uC774\uD130 \uC810\uAC80\uC744 \uD655\uC778\uD558\uC138\uC694."), vbExclamation
         Exit Sub
-    ElseIf status <> "정상" Then
+    ElseIf status <> T("\uC815\uC0C1") Then
         Application.ScreenUpdating = True
-        If MsgBox("데이터 점검에 '확인' 항목이 있습니다. 그래도 보고서를 만들까요?", vbQuestion + vbYesNo) = vbNo Then
-            ThisWorkbook.Worksheets("실행").Activate
+        If MsgBox(T("\uB370\uC774\uD130 \uC810\uAC80\uC5D0 '\uD655\uC778' \uD56D\uBAA9\uC774 \uC788\uC2B5\uB2C8\uB2E4. \uADF8\uB798\uB3C4 \uBCF4\uACE0\uC11C\uB97C \uB9CC\uB4E4\uAE4C\uC694?"), vbQuestion + vbYesNo) = vbNo Then
+            ThisWorkbook.Worksheets(T("\uC2E4\uD589")).Activate
             Exit Sub
         End If
         Application.ScreenUpdating = False
@@ -246,7 +257,7 @@ Public Sub MakeWordReport()
     Set wd = CreateObject("Word.Application")
     Set doc = wd.Documents.Add
     With doc.PageSetup
-        .Orientation = 0                                   ' 세로
+        .Orientation = 0
         .PageWidth = wd.CentimetersToPoints(21)
         .PageHeight = wd.CentimetersToPoints(29.7)
         .LeftMargin = wd.CentimetersToPoints(2)
@@ -281,21 +292,20 @@ Public Sub MakeWordReport()
 
     Application.ScreenUpdating = True
     wd.Visible = True
-    outPath = ThisWorkbook.Path & Application.PathSeparator & "손해율_보고서_" & _
+    outPath = ThisWorkbook.Path & Application.PathSeparator & T("\uC190\uD574\uC728_\uBCF4\uACE0\uC11C_") & _
               Format(ThisWorkbook.Names("BASE_YM").RefersToRange.Value, "0") & ".docx"
     doc.SaveAs2 outPath, 16                                ' wdFormatDocumentDefault
-    MsgBox "워드 보고서 생성 완료:" & vbCrLf & outPath, vbInformation
+    MsgBox T("\uC6CC\uB4DC \uBCF4\uACE0\uC11C \uC0DD\uC131 \uC644\uB8CC:") & vbCrLf & outPath, vbInformation
     Exit Sub
 Fail:
     Application.CutCopyMode = False
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
     If Not wd Is Nothing Then wd.Visible = True
-    MsgBox "워드 보고서 생성 중 오류 (" & r & "행 처리 중): " & Err.Description & vbCrLf & _
-           "(같은 이름의 docx가 열려 있으면 닫고 다시 실행하세요)", vbCritical
+    MsgBox T("\uC6CC\uB4DC \uBCF4\uACE0\uC11C \uC0DD\uC131 \uC911 \uC624\uB958 (") & r & T("\uD589 \uCC98\uB9AC \uC911): ") & Err.Description & vbCrLf & _
+           T("(\uAC19\uC740 \uC774\uB984\uC758 docx\uAC00 \uC5F4\uB824 \uC788\uC73C\uBA74 \uB2EB\uACE0 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC138\uC694)"), vbCritical
 End Sub
 
-' 셀 값을 화면 표시 형식 그대로 문자열로 (#### 표시 문제 없음)
 Private Function CellText(c As Range) As String
     Dim v As Variant
     v = c.Value2
@@ -311,7 +321,6 @@ Private Function CellText(c As Range) As String
     On Error GoTo 0
 End Function
 
-' 문서 끝에 문단 추가 → 삽입 시작 위치 반환
 Private Function AddPara(doc As Object, txt As String, tag As String, pb As Boolean) As Long
     Dim r As Object
     Set r = doc.Range(doc.Content.End - 1, doc.Content.End - 1)
@@ -360,7 +369,6 @@ Private Function AddPara(doc As Object, txt As String, tag As String, pb As Bool
     ResetLastParagraph doc
 End Function
 
-' "* A / B" 범례: A는 빨강, B는 파랑
 Private Sub ColorLegend(doc As Object, st As Long, txt As String)
     Dim p As Long, s0 As Long
     p = InStr(txt, " / ")
@@ -370,8 +378,6 @@ Private Sub ColorLegend(doc As Object, st As Long, txt As String)
     doc.Range(st + p + 2, st + Len(txt)).Font.Color = RGB(0, 112, 192)
 End Sub
 
-' 보고서 시트의 표 → 임시 시트에 실제 행만 모아(구분 셀 병합) → 워드에 붙여넣기
-' 태그: TBL,머리행수,본문슬롯수,꼬리행수,열수,구분열,색코드열,열너비1;열너비2;...
 Private Sub PutTable(doc As Object, ws As Worksheet, r As Long, parts As Variant)
     Dim nHead As Long, nBody As Long, nFoot As Long, nC As Long, gCol As Long, cCol As Long
     Dim w As Variant, tmp As Worksheet, outR As Long, bStart As Long, i As Long, rr As Long, j As Long
@@ -391,7 +397,7 @@ Private Sub PutTable(doc As Object, ws As Worksheet, r As Long, parts As Variant
     bStart = outR
     For i = 0 To nBody - 1
         rr = r + nHead + i
-        If Trim(CellText(ws.Cells(rr, 3))) = "" Then Exit For      ' 급부명 빈칸 = 표 끝
+        If Trim(CellText(ws.Cells(rr, 3))) = "" Then Exit For
         CopyBlock ws.Range(ws.Cells(rr, 2), ws.Cells(rr, 1 + nC)), tmp, outR
         If cCol > 0 Then
             code = ws.Cells(rr, 1 + cCol).Value
@@ -419,8 +425,8 @@ Private Sub PutTable(doc As Object, ws As Worksheet, r As Long, parts As Variant
     Application.DisplayAlerts = True
 
     Set t = doc.Tables(doc.Tables.Count)
-    On Error Resume Next                                   ' 서식 보정 (실패해도 진행)
-    t.AutoFitBehavior 2                                    ' 페이지 폭에 맞춤
+    On Error Resume Next
+    t.AutoFitBehavior 2
     t.Rows.AllowBreakAcrossPages = False
     t.Range.Font.Name = FONT_NAME
     On Error GoTo 0
@@ -429,7 +435,6 @@ Private Sub PutTable(doc As Object, ws As Worksheet, r As Long, parts As Variant
     ResetLastParagraph doc
 End Sub
 
-' 서식(병합 포함)을 복사하고 값은 화면 표시 문자열로 기록
 Private Sub CopyBlock(src As Range, tmp As Worksheet, outRow As Long)
     Dim c As Range, d As Range, i As Long
     src.Copy
@@ -447,7 +452,6 @@ Private Sub CopyBlock(src As Range, tmp As Worksheet, outRow As Long)
     Next i
 End Sub
 
-' 같은 구분이 연속되면 세로 병합
 Private Sub MergeGroups(ws As Worksheet, r1 As Long, r2 As Long, col As Long)
     Dim s As Long, r As Long
     s = r1
@@ -471,7 +475,6 @@ Private Sub DoMerge(ws As Worksheet, a As Long, b As Long, col As Long)
     End With
 End Sub
 
-' 마지막 빈 문단이 앞 문단 서식(페이지 나눔 등)을 물려받지 않도록 초기화
 Private Sub ResetLastParagraph(doc As Object)
     With doc.Paragraphs(doc.Paragraphs.Count).Format
         .PageBreakBefore = False

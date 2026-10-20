@@ -667,7 +667,7 @@ def sheet_macro(wb):
     widths(ws, [120])
     cell(ws, "A1", "매크로 설치(파일 반입이 막힐 때): 아래 A3부터 마지막 줄까지 선택 → 복사 → Alt+F11 → 삽입 → 모듈 → 붙여넣기 → "
                    ".xlsm으로 저장", F(10, True, "C00000"))
-    lines = (BASE / "excel" / "report_macro.bas").read_text(encoding="cp949").splitlines()
+    lines = (BASE / "excel" / "report_macro.bas").read_text(encoding="ascii").splitlines()
     for i, line in enumerate([l for l in lines if not l.startswith("Attribute ")], start=3):
         c = ws.cell(i, 1)
         c.value = line if line else None

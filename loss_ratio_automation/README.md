@@ -47,3 +47,8 @@ python build_excel.py                      # 엑셀 템플릿 생성
 # LibreOffice 또는 엑셀로 재계산 후
 python verify_excel.py excel/손해율_보고서.xlsx   # 보고서 시트 숫자를 pandas 로 독립 재계산해 대조
 ```
+
+## 매크로 소스 관리
+- `vba/report_macro_src.vba`: 사람이 읽는 원본 (UTF-8, 한글 주석)
+- `python vba/to_ascii.py vba/report_macro_src.vba excel/report_macro.bas`: 반입용 ASCII 전용 파일 생성
+  (한글 문자열은 `T("\uXXXX")`로 바뀌어 어떤 인코딩으로 옮겨도 깨지지 않음) → `report_macro.txt`로 복사 후 `build_excel.py` 재실행
