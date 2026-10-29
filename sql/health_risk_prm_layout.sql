@@ -53,6 +53,8 @@ SELECT  BASE.계약년월
               , A.LOSS_AMT
           FROM  DHADM.STAT_RISK_PRM_MASTER A
          WHERE  SUBSTR(A.MAIN_PROD_CODE, 1, 2) = '4A'          -- 건강보험 한정
+           AND  A.POLI_DT >= '20260101'                        -- 계약월 202601 ~ 202609
+           AND  A.POLI_DT <  '20261001'
         -- AND  A.CLOS_YR_MON = :CLOS_YR_MON                   -- 필요 시 마감년월 조건
        ) BASE
  GROUP BY BASE.계약년월
