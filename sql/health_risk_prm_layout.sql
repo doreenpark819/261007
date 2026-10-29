@@ -25,7 +25,7 @@ SELECT  BASE.계약년월
                    , LPAD(FLOOR(A.AGE / 10) * 10, 2, '0') || '~' ||
                      LPAD(FLOOR(A.AGE / 10) * 10 + 9, 2, '0')
                    , '미상')                                  AS 연령대
-              , A.PROD_CODE                                   AS 담보코드   -- 신위험보장급부코드 기준이면 A.GRNTE_CODE
+              , A.GRNTE_CODE                                  AS 담보코드   -- 신위험보장급부코드
               , A.DISCLOSURE_TYPE                             AS 심사유형   -- 일반심사/간편305/간편335/간편355/간편3105
               , A.RCRT_BRNC                                   AS 모집지점명
               -- **본인계약여부 : 모집사원실명번호(A) = 피보험자주민번호(H)
