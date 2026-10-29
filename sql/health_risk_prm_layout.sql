@@ -6,20 +6,9 @@
    - 범위 : 건강보험 한정 SUBSTR(MAIN_PROD_CODE,1,2) = '4A'
    ※ GROUP BY 절에는 서브쿼리(IN (SELECT ...))를 쓸 수 없으므로(ORA-22818)
      인라인뷰(BASE)에서 구분값을 먼저 만들고 바깥에서 집계한다.
-   ※ H/C 테이블에 증번·사원코드가 여러 건 있어도 A 행이 복제되지 않도록
-     WITH 절에서 DISTINCT 후 "조인키 전체"로 조인한다.
+   ※ 본인계약/유의설계사 여부는 EXISTS 로 판정 → H/C 테이블 건수와 무관하게 A 행이 복제되지 않음
+   ※ 건강보험은 종피 없이 주피 1인 → 피보험자 구분 조건 불필요
    ===================================================================== */
-WITH SOLO_POLI AS (                                           -- 본인계약 판정용 (증번+피보험자주민번호 중복 제거)
-        SELECT DISTINCT POLI_NO
-                      , INSD_RSDS_NO
-          FROM 피보험자테이블                                 -- ※ 실제 테이블명으로 교체
-     )
-   , YUI_AGNT AS (                                            -- 유의설계사 목록 (사원코드 중복 제거)
-        SELECT DISTINCT YUI_SAWONCD
-          FROM 유의설계사테이블                               -- ※ 실제 테이블명으로 교체
-         WHERE GUBUN   = 'SU'
-           AND GUBUN_S = 'SU03'
-     )
 SELECT  BASE.계약년월
       , BASE.마감년월
       , BASE.연령대
@@ -42,19 +31,21 @@ SELECT  BASE.계약년월
               , A.DISCLOSURE_TYPE                             AS 심사유형   -- 일반심사/간편305/간편335/간편355/간편3105
               , A.RCRT_BRNC                                   AS 모집지점명
               -- **본인계약여부 : 모집사원실명번호(A) = 피보험자주민번호(H)
-              , CASE WHEN H.POLI_NO IS NOT NULL
+              , CASE WHEN EXISTS (SELECT 1
+                                    FROM 피보험자테이블 H     -- ※ 실제 테이블명으로 교체
+                                   WHERE H.POLI_NO      = A.POLI_NO
+                                     AND H.INSD_RSDS_NO = A.AGNT_RSDS_NO)
                      THEN 'Y' ELSE 'N' END                    AS 본인계약여부
               -- ***유의설계사여부 : 모집사원코드(A)가 유의설계사테이블(C)에 조건으로 존재
-              , CASE WHEN C.YUI_SAWONCD IS NOT NULL
+              , CASE WHEN EXISTS (SELECT 1
+                                    FROM 유의설계사테이블 C   -- ※ 실제 테이블명으로 교체
+                                   WHERE C.YUI_SAWONCD = A.AGNT_CD
+                                     AND C.GUBUN       = 'SU'
+                                     AND C.GUBUN_S     = 'SU03')
                      THEN 'Y' ELSE 'N' END                    AS 유의설계사여부
               , A.RISK_PRM
               , A.LOSS_AMT
           FROM  DHADM.STAT_RISK_PRM_MASTER A
-          LEFT OUTER JOIN SOLO_POLI H                         -- 증번 + 주민번호 둘 다 조인 → A 1행당 최대 1건 매칭
-                  ON H.POLI_NO      = A.POLI_NO
-                 AND H.INSD_RSDS_NO = A.AGNT_RSDS_NO
-          LEFT OUTER JOIN YUI_AGNT C
-                  ON C.YUI_SAWONCD = A.AGNT_CD
          WHERE  SUBSTR(A.MAIN_PROD_CODE, 1, 2) = '4A'          -- 건강보험 한정
         -- AND  A.CLOS_YR_MON = :CLOS_YR_MON                   -- 필요 시 마감년월 조건
        ) BASE
