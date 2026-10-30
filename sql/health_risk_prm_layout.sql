@@ -18,7 +18,7 @@ SELECT  BASE.계약년월
       , BASE.모집지점명
       , BASE.본인계약여부
       , BASE.유의설계사여부
-      , SUM(BASE.RISK_PRM)  AS 위험보험료합
+      , SUM(ROUND(BASE.RISK_PRM, 2))  AS 위험보험료합   -- 건별 소수 둘째자리 반올림 후 합산
       , SUM(BASE.LOSS_AMT)  AS 손해액합
   FROM (
         SELECT  SUBSTR(A.POLI_DT, 1, 6)                       AS 계약년월
